@@ -29,10 +29,13 @@
 @end
 
 @implementation ViewController {
+  BOOL restartInProgress;
   BOOL stopRequested;
+  __block BOOL speechDetected;
   __block BOOL speechWhileEnding;
   __block BOOL endingTransaction;
-  BOOL endingStream;
+  UIButton *startButton;
+  NSTimer *transactionTimer;
 }
 
 - (void)viewDidLoad {
@@ -45,7 +48,8 @@
   if (sender) {
     stopRequested = NO;
     speechWhileEnding = NO;
-    //_startButton.enabled = NO;
+    startButton = (UIButton *) sender;
+    startButton.enabled = NO;
   } else if (stopRequested) {
     return;
   }
@@ -56,28 +60,52 @@
   [[AudioController sharedInstance] prepareWithSampleRate:SAMPLE_RATE];
   [[SpeechRecognitionService sharedInstance] setSampleRate:SAMPLE_RATE];
   [[AudioController sharedInstance] start];
+  
+  // stop transcription before hitting 60s streaming limit
+  transactionTimer = [NSTimer scheduledTimerWithTimeInterval:55.0
+                                                      target:self
+                                                    selector:@selector(transactionTimeoutHandler)
+                                                    userInfo:nil
+                                                     repeats:NO];
 }
 
 - (IBAction)stopAudio:(id)sender {
   [[AudioController sharedInstance] stop];
   [[SpeechRecognitionService sharedInstance] stopStreaming];
-  if (sender) {
+  if (sender || stopRequested) {
     stopRequested = YES;
-    //_startButton.enabled = YES;
+    if (startButton) {
+      startButton.enabled = YES;
+    }
+  }
+  if (transactionTimer.valid) {
+    [transactionTimer invalidate];
   }
 }
 
 // restart after API error
 - (void) restart {
-  if (endingStream || stopRequested) {
+  if (restartInProgress || stopRequested) {
     return;
   }
-  endingStream = YES;
+  restartInProgress = YES;
   [self stopAudio:nil];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-    endingStream = NO;
+    restartInProgress = NO;
     [self recordAudio:nil];
   });
+}
+
+- (void) transactionTimeoutHandler {
+  BOOL restartWhenSpeechless = NO; // set to YES to keep going when no speech is detected
+  if (speechDetected) {
+    return; // transaction will be restarted once isFinal transcription is received
+  } else if (restartWhenSpeechless) {
+    [self restart];
+  } else {
+    stopRequested = YES;
+    [self stopAudio:nil];
+  }
 }
 
 - (void) processSampleData:(NSData *)data
@@ -132,15 +160,18 @@
                                                             [self restart];
                                                         }
                                                     } else if (response.endpointerType == StreamingRecognizeResponse_EndpointerType_StartOfSpeech) {
+                                                      speechDetected = YES;
                                                       if (endingTransaction)
                                                         speechWhileEnding = YES;
                                                       _textView.text = nil;
                                                     } else if (response.endpointerType == StreamingRecognizeResponse_EndpointerType_EndOfSpeech) {
+                                                      speechDetected = YES;
                                                       if (endingTransaction)
                                                         speechWhileEnding = YES;
                                                     } else if (response.endpointerType == StreamingRecognizeResponse_EndpointerType_EndOfAudio) {
                                                       if (endingTransaction) {
                                                         endingTransaction = NO;
+                                                        speechDetected = NO;
                                                         NSLog(@"restarting audio");
                                                         [self recordAudio:nil];
                                                       }
