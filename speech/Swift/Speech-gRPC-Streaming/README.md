@@ -62,3 +62,6 @@ This app demonstrates how to make streaming gRPC connections to the [Cloud Speec
 [cocoapods]: https://cocoapods.org/
 [gRPC Objective-C setup]: https://github.com/grpc/grpc/tree/master/src/objective-c
 
+## Troubleshooting
+
+If you're having issues running sample project, please see [BUILDFIXES](https://github.com/GoogleCloudPlatform/ios-docs-samples/blob/master/speech/Swift/Speech-gRPC-Streaming/BUILDFIXES) file.
