@@ -20,6 +20,7 @@
 
 @interface AudioController () {
   AudioComponentInstance remoteIOUnit;
+    BOOL audioComponentInitialized;
 }
 @end
 
@@ -126,6 +127,7 @@ static OSStatus playbackCallback(void *inRefCon,
   AVAudioSession *session = [AVAudioSession sharedInstance];
 
   NSError *error;
+
   BOOL ok = [session setCategory:AVAudioSessionCategoryRecord error:&error];
   NSLog(@"set category %d", ok);
 
@@ -143,20 +145,24 @@ static OSStatus playbackCallback(void *inRefCon,
   double sampleRate = session.sampleRate;
   NSLog (@"hardware sample rate = %f, using specified rate = %f", sampleRate, specifiedSampleRate);
   sampleRate = specifiedSampleRate;
+  if (!audioComponentInitialized) {
+        
+    audioComponentInitialized = YES;
+    // Describe the RemoteIO unit
+    AudioComponentDescription audioComponentDescription;
+    audioComponentDescription.componentType = kAudioUnitType_Output;
+    audioComponentDescription.componentSubType = kAudioUnitSubType_RemoteIO;
+    audioComponentDescription.componentManufacturer = kAudioUnitManufacturer_Apple;
+    audioComponentDescription.componentFlags = 0;
+    audioComponentDescription.componentFlagsMask = 0;
 
-  // Describe the RemoteIO unit
-  AudioComponentDescription audioComponentDescription;
-  audioComponentDescription.componentType = kAudioUnitType_Output;
-  audioComponentDescription.componentSubType = kAudioUnitSubType_RemoteIO;
-  audioComponentDescription.componentManufacturer = kAudioUnitManufacturer_Apple;
-  audioComponentDescription.componentFlags = 0;
-  audioComponentDescription.componentFlagsMask = 0;
-
-  // Get the RemoteIO unit
-  AudioComponent remoteIOComponent = AudioComponentFindNext(NULL,&audioComponentDescription);
-  status = AudioComponentInstanceNew(remoteIOComponent,&(self->remoteIOUnit));
-  if (CheckError(status, "Couldn't get RemoteIO unit instance")) {
-    return status;
+    // Get the RemoteIO unit
+    AudioComponent remoteIOComponent = AudioComponentFindNext(NULL,&audioComponentDescription);
+    status = AudioComponentInstanceNew(remoteIOComponent,&(self->remoteIOUnit));
+    if (CheckError(status, "Couldn't get RemoteIO unit instance")) {
+      return status;
+    }
+    
   }
 
   UInt32 oneFlag = 1;
