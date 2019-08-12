@@ -95,11 +95,24 @@ class DrawerContentViewController: UITableViewController {
       items = defaultItems
     }
     if let index = items.firstIndex(of: indexPath.row) {
+      if BetaFeatureMenu.knowledgeConnector.rawValue == items[indexPath.row] {
+        //Remove knowledge connector path from user defaults
+        UserDefaults.standard.removeObject(forKey: "knowledgeBasePath")
+      }
       items.remove(at: index)
       cell?.accessoryView = nil
+
     } else {
+      if BetaFeatureMenu.knowledgeConnector.rawValue == indexPath.row {
+        //Call getKnowledge connector path api
+        //save knowledge connector path in user defaults
+        StopwatchService.sharedInstance.getKnowledgeBasePath { (knowledgeBasePath) in
+          UserDefaults.standard.set(knowledgeBasePath, forKey: "knowledgeBasePath")
+        }
+
+      }
       items.append(indexPath.row)
-      cell?.accessoryView = UIImageView(image: #imageLiteral(resourceName: "ic_done"))
+      cell?.accessoryView = UIImageView(image: #imageLiteral(resourceName: "ic_done") )
     }
     defaults.set(items, forKey: ApplicationConstants.selectedMenuItems)
   }

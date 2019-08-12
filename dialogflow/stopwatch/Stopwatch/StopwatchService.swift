@@ -42,8 +42,8 @@ class StopwatchService {
   private var call : GRPCProtoCall!
   var userInputText: String? = "Hello"
   var delegate: StopwatchServiceProtocol?
-  var audioData: Data?
-  
+  var authToken: String = ""
+
   private var session : String {
     return "projects/" + ApplicationConstants.ProjectName + "/agent/sessions/" + ApplicationConstants.SessionID
   }
@@ -63,58 +63,56 @@ class StopwatchService {
       }
     }
   }
-  
-  @objc func streamAudioData() {
-    getDeviceID { (deviceID) in
-      // authenticate using an authorization token (obtained using OAuth)
-      FCMTokenProvider.getToken(deviceID: deviceID) { (shouldWait, token, error) in
-        if let authT = token, shouldWait == false {//Token received execute code
-          if (!self.streaming) {
-            // if we aren't already streaming, set up a gRPC connection
-            self.client = DFSessions(host:ApplicationConstants.Host)
-            self.writer = GRXBufferedPipe()
-            self.call = self.client.rpcToStreamingDetectIntent(
-              withRequestsWriter: self.writer,
-              eventHandler: { (done, response, error) in
-                self.delegate?.didReceiveAudioInputResponse(response: response, error: error as NSError?)
-                //                            completion(response, error as NSError?)
-            })
-            self.call.requestHeaders.setObject(NSString(string:authT),
-                                               
-                                               forKeyedSubscript:NSString(string:"Authorization"))
-            self.call.start()
-            self.streaming = true
-            // send an initial request message to configure the service
-            let queryInput = DFQueryInput()
-            let inputAudioConfig = DFInputAudioConfig()
-            inputAudioConfig.audioEncoding = DFAudioEncoding(rawValue:1)!
-            inputAudioConfig.languageCode = ApplicationConstants.languageCode
-            inputAudioConfig.sampleRateHertz = Int32(self.sampleRate)
-            queryInput.audioConfig = inputAudioConfig
-            let streamingDetectIntentRequest = DFStreamingDetectIntentRequest()
-            streamingDetectIntentRequest.session = self.session
-            streamingDetectIntentRequest.singleUtterance = true
-            streamingDetectIntentRequest.queryParams = self.getQueryParmasFor()
-            streamingDetectIntentRequest.queryInput = queryInput
-            streamingDetectIntentRequest.outputAudioConfig = self.getOutputAudioConfig()
-            self.writer.writeValue(streamingDetectIntentRequest)
-            //Remove notification
-            NotificationCenter.default.removeObserver(self, name: NSNotification.Name(ApplicationConstants.tokenReceived), object: nil)
-          }
-          // send a request message containing the audio data
-          let streamingDetectIntentRequest = DFStreamingDetectIntentRequest()
-          streamingDetectIntentRequest.inputAudio = self.audioData ?? Data()
-          self.writer.writeValue(streamingDetectIntentRequest)
-        } else if shouldWait == true {//Token will be sent via PN.
-          //Observe for notification
-          NotificationCenter.default.addObserver(self, selector: #selector(self.streamAudioData), name: NSNotification.Name(ApplicationConstants.tokenReceived), object: nil)
-        } else {// an error occurred
-          //Handle error
-        }
-      }
+
+  func streamAudioData(_ audioData: NSData, completion: @escaping StopwatchCompletionHandler) {
+    // authenticate using an authorization token (obtained using OAuth)
+    if (!self.streaming) {
+      // if we aren't already streaming, set up a gRPC connection
+      self.client = DFSessions(host:ApplicationConstants.Host)
+      self.writer = GRXBufferedPipe()
+      self.call = self.client.rpcToStreamingDetectIntent(
+        withRequestsWriter: self.writer,
+        eventHandler: { (done, response, error) in
+          completion(response, error as NSError?)
+      })
+      self.call.requestHeaders.setObject(NSString(string:authToken),
+
+                                         forKey:NSString(string:"Authorization"))
+      self.call.start()
+      self.streaming = true
+      // send an initial request message to configure the service
+      let queryInput = DFQueryInput()
+      let inputAudioConfig = DFInputAudioConfig()
+      inputAudioConfig.audioEncoding = DFAudioEncoding(rawValue:1)!
+      inputAudioConfig.languageCode = ApplicationConstants.languageCode
+      inputAudioConfig.sampleRateHertz = Int32(self.sampleRate)
+      queryInput.audioConfig = inputAudioConfig
+      let streamingDetectIntentRequest = DFStreamingDetectIntentRequest()
+      streamingDetectIntentRequest.session = self.session
+      streamingDetectIntentRequest.singleUtterance = true
+      streamingDetectIntentRequest.queryParams = self.getQueryParmasFor()
+      streamingDetectIntentRequest.queryInput = queryInput
+      streamingDetectIntentRequest.outputAudioConfig = self.getOutputAudioConfig()
+      self.writer.writeValue(streamingDetectIntentRequest)
     }
+    // send a request message containing the audio data
+    let streamingDetectIntentRequest = DFStreamingDetectIntentRequest()
+    streamingDetectIntentRequest.inputAudio = audioData as Data
+    self.writer.writeValue(streamingDetectIntentRequest)
   }
-  
+
+  func getQueryParamsForAudionWithoutKnowledge() -> DFQueryParameters {
+    let queryParams = DFQueryParameters()
+    let defaults = UserDefaults.standard
+    if let defaultItems = defaults.value(forKey: ApplicationConstants.selectedMenuItems) as? [Int],
+      defaultItems.count > 0 {
+      let sentimentSelected =
+        defaultItems.contains(BetaFeatureMenu.sentimentAnalysis.rawValue)
+      queryParams.sentimentAnalysisRequestConfig = getSentimentAnalysisConfig(sentimentSelected: sentimentSelected)
+    }
+    return queryParams
+  }
+
   @objc func sendText() {
     getDeviceID { (deviceID) in
       // authenticate using an authorization token (obtained using OAuth)
@@ -180,7 +178,7 @@ class StopwatchService {
       queryParams.sentimentAnalysisRequestConfig = getSentimentAnalysisConfig(sentimentSelected: sentimentSelected)
       
       if defaultItems.contains(BetaFeatureMenu.knowledgeConnector.rawValue) {
-        getKnowledgeBasePath { (knowledgeBasePath) in
+        if let knowledgeBasePath = UserDefaults.standard.value(forKey: "knowledgeBasePath") as? String {
           queryParams.knowledgeBaseNamesArray = [knowledgeBasePath]
         }
       }
@@ -193,7 +191,7 @@ class StopwatchService {
   @objc func getKnowledgeBasePath(handler: @escaping (_ KnowledgeBasePath: String) -> Void) {
     getDeviceID { (deviceID) in
       // authenticate using an authorization token (obtained using OAuth)
-      FCMTokenProvider.getToken(deviceID: "getDeviceIDFromSomewhere") { (shouldWait, token, error) in
+      FCMTokenProvider.getToken(deviceID: deviceID) { (shouldWait, token, error) in
         if let authT = token, shouldWait == false { //Token received execute code
           let knowledgeBase = DFKnowledgeBases(host: ApplicationConstants.Host)
           let request = DFListKnowledgeBasesRequest()
@@ -212,8 +210,8 @@ class StopwatchService {
               handler(knowledgeBasePath)
             }
           })
-          self.call.requestHeaders.setObject(NSString(string:authT),
-                                             forKey:NSString(string:"Authorization"))
+          call.requestHeaders.setObject(NSString(string:authT),
+                                        forKey:NSString(string:"Authorization"))
           call.start()
           //Remove notification
           NotificationCenter.default.removeObserver(self, name: NSNotification.Name(ApplicationConstants.tokenReceived), object: nil)

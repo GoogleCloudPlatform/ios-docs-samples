@@ -18,6 +18,7 @@ import UIKit
 import MaterialComponents
 import AVFoundation
 import googleapis
+import AuthLibrary
 
 class DialogflowViewController: UIViewController {
   let headerViewController = DrawerHeaderViewController()
@@ -162,15 +163,34 @@ class DialogflowViewController: UIViewController {
   
   //Action to stat microphone for speech chat
   @IBAction func didTapMicrophone(_ sender: Any) {
-    if !listening {
-      self.startListening()
-    } else {
-      self.stopListening()
+    StopwatchService.sharedInstance.getDeviceID { (deviceID) in
+      // authenticate using an authorization token (obtained using OAuth)
+      FCMTokenProvider.getToken(deviceID: deviceID) { (shouldWait, token, error) in
+        if let authT = token, shouldWait == false {//Token received execute code
+          StopwatchService.sharedInstance.authToken = authT
+          if !self.listening {
+            self.startListening()
+          } else {
+            self.stopListening()
+          }
+          NotificationCenter.default.removeObserver(self, name: NSNotification.Name(ApplicationConstants.tokenReceived), object: nil)
+        }
+        else if shouldWait == true {//Token will be sent via PN.
+          //Observe for notification
+          NotificationCenter.default.addObserver(self, selector: #selector(self.didTapMicrophoneM), name: NSNotification.Name(ApplicationConstants.tokenReceived), object: nil)
+        } else {// an error occurred
+          //Handle error
+        }
+      }
     }
     
   }
-  
-  
+
+  @objc func didTapMicrophoneM() {
+    didTapMicrophone(audioButton)
+  }
+
+
   @IBAction func didTapCancelButton(_ sender: Any) {
     optionsCard.isHidden = false
     optionsCard.isHidden = true
@@ -234,9 +254,64 @@ extension DialogflowViewController: AudioControllerDelegate {
         * 2 /* bytes/sample */);
     //Handling the response by the agent eg. showing the quertText, fulfillmentText, and also
     //if user has selected TTS then playing the response audio
-    if audioData.length > chunkSize, let data = audioData as Data? {
-      StopwatchService.sharedInstance.audioData = data
-      StopwatchService.sharedInstance.streamAudioData()
+    if (audioData.length > chunkSize) {
+      StopwatchService.sharedInstance.streamAudioData(
+        audioData,
+        completion: { [weak self] (response, error) in
+          print("Process sample data: \(String(describing: response))")
+          guard let strongSelf = self else {
+            return
+          }
+          if let error = error, !error.localizedDescription.isEmpty {
+            strongSelf.handleError(error: error)
+          } else if let response = response {
+            if !response.recognitionResult.transcript.isEmpty {
+              if strongSelf.isFirst{
+                strongSelf.tableViewDataSource.append([ApplicationConstants.selfKey: response.recognitionResult.transcript])
+                strongSelf.tableView.insertRows(at: [IndexPath(row: strongSelf.tableViewDataSource.count - 1, section: 0)], with: .automatic)
+                strongSelf.isFirst = false
+              }else {
+                strongSelf.tableViewDataSource.removeLast()
+                strongSelf.tableViewDataSource.append([ApplicationConstants.selfKey: response.recognitionResult.transcript])
+                strongSelf.tableView.reloadRows(at: [IndexPath(row: strongSelf.tableViewDataSource.count - 1, section: 0)], with: .automatic)
+              }
+            }
+            if let recognitionResult = response.recognitionResult {
+              if recognitionResult.isFinal {
+                strongSelf.stopListening()
+                strongSelf.isFirst = true
+              }
+            }
+            if !response.queryResult.queryText.isEmpty {
+              strongSelf.tableViewDataSource.removeLast()
+              strongSelf.tableViewDataSource.append([ApplicationConstants.selfKey: response.queryResult.queryText])
+              strongSelf.tableView.reloadRows(at: [IndexPath(row: strongSelf.tableViewDataSource.count -  1, section: 0)], with: .automatic)
+            }
+
+            var text = ""
+            if !response.queryResult.fulfillmentText.isEmpty {
+              text = response.queryResult.fulfillmentText ?? ""
+              if response.queryResult.fulfillmentMessagesArray_Count > 0, let lastTextObj = response.queryResult.fulfillmentMessagesArray.lastObject as? DFIntent_Message, let finalText = lastTextObj.text.textArray.lastObject as? String {
+                text = finalText
+              }
+            } else if response.queryResult.hasKnowledgeAnswers, response.queryResult.knowledgeAnswers.answersArray_Count > 0, let lastKnowledgeAnswer = response.queryResult.knowledgeAnswers.answersArray.lastObject as? DFKnowledgeAnswers_Answer, let finalText = lastKnowledgeAnswer.answer{
+              text = finalText
+            }
+            if !text.isEmpty {
+              if response.queryResult.hasSentimentAnalysisResult {
+                text += "\nSentiment score:\(response.queryResult.sentimentAnalysisResult.queryTextSentiment.score)"
+                text += "\nSentiment magnitude:\(response.queryResult.sentimentAnalysisResult.queryTextSentiment.magnitude)"
+              }
+              strongSelf.tableViewDataSource.append([ApplicationConstants.botKey: text])
+              strongSelf.tableView.insertRows(at: [IndexPath(row: strongSelf.tableViewDataSource.count - 1, section: 0)], with: .automatic)
+            }
+            if response.hasOutputAudioConfig, let audioOutput = response.outputAudio {
+              self?.audioPlayerFor(audioData: audioOutput)
+              print("playing audio")
+            }
+            strongSelf.tableView.scrollToBottom()
+          }
+      })
       self.audioData = NSMutableData()
     }
   }
@@ -295,6 +370,9 @@ extension DialogflowViewController: UITextFieldDelegate {
   func audioPlayerFor(audioData: Data) {
     DispatchQueue.main.async {
       do {
+        try AVAudioSession.sharedInstance().setCategory(.playback)
+        //setCategory(.playback, mode: .default, options: [])
+        try AVAudioSession.sharedInstance().setActive(true, options: [])
         self.avPlayer = try AVAudioPlayer(data: audioData)
         self.avPlayer?.play()
       } catch let error {
@@ -346,23 +424,24 @@ extension DialogflowViewController: StopwatchServiceProtocol {
         tableViewDataSource.append([ApplicationConstants.selfKey: response.queryResult.queryText])
         tableView.insertRows(at: [IndexPath(row: tableViewDataSource.count - 1, section: 0)], with: .automatic)
       }
+      var text = ""
       if !response.queryResult.fulfillmentText.isEmpty {
-        var text = response.queryResult.fulfillmentText ?? ""
+        text = response.queryResult.fulfillmentText ?? ""
         if response.queryResult.fulfillmentMessagesArray_Count > 0, let lastTextObj = response.queryResult.fulfillmentMessagesArray.lastObject as? DFIntent_Message, let finalText = lastTextObj.text.textArray.lastObject as? String {
           text = finalText
         }
-        if response.queryResult.hasSentimentAnalysisResult {
-          text += "\nSentiment score:\(response.queryResult.sentimentAnalysisResult.queryTextSentiment.score)"
-          text += "\nSentiment magnitude:\(response.queryResult.sentimentAnalysisResult.queryTextSentiment.magnitude)"
-        }
-        tableViewDataSource.append([ApplicationConstants.botKey: text])
-        tableView.insertRows(at: [IndexPath(row: tableViewDataSource.count - 1, section: 0)], with: .automatic)
+      } else if response.queryResult.hasKnowledgeAnswers, response.queryResult.knowledgeAnswers.answersArray_Count > 0, let lastKnowledgeAnswer = response.queryResult.knowledgeAnswers.answersArray.lastObject as? DFKnowledgeAnswers_Answer, let finalText = lastKnowledgeAnswer.answer{
+        text = finalText
       }
+      if response.queryResult.hasSentimentAnalysisResult {
+        text += "\nSentiment score:\(response.queryResult.sentimentAnalysisResult.queryTextSentiment.score)"
+        text += "\nSentiment magnitude:\(response.queryResult.sentimentAnalysisResult.queryTextSentiment.magnitude)"
+      }
+      tableViewDataSource.append([ApplicationConstants.botKey: text])
+      tableView.insertRows(at: [IndexPath(row: tableViewDataSource.count - 1, section: 0)], with: .automatic)
       tableView.scrollToBottom()
     }
   }
-  
-  
   func didReceiveAudioInputResponse(response: DFStreamingDetectIntentResponse?, error: NSError?) {
     if let error = error, !error.localizedDescription.isEmpty {
       handleError(error: error)
@@ -389,17 +468,23 @@ extension DialogflowViewController: StopwatchServiceProtocol {
         tableViewDataSource.append([ApplicationConstants.selfKey: response.queryResult.queryText])
         tableView.reloadRows(at: [IndexPath(row: tableViewDataSource.count -  1, section: 0)], with: .automatic)
       }
+      var text = ""
       if !response.queryResult.fulfillmentText.isEmpty {
-        var text = response.queryResult.fulfillmentText ?? ""
+        text = response.queryResult.fulfillmentText ?? ""
         if response.queryResult.fulfillmentMessagesArray_Count > 0, let lastTextObj = response.queryResult.fulfillmentMessagesArray.lastObject as? DFIntent_Message, let finalText = lastTextObj.text.textArray.lastObject as? String {
           text = finalText
         }
+
+      } else if response.queryResult.hasKnowledgeAnswers, response.queryResult.knowledgeAnswers.answersArray_Count > 0, let lastKnowledgeAnswer = response.queryResult.knowledgeAnswers.answersArray.lastObject as? DFKnowledgeAnswers_Answer, let finalText = lastKnowledgeAnswer.answer{
+        text = finalText
+      }
+      if !text.isEmpty {
         if response.queryResult.hasSentimentAnalysisResult {
           text += "\nSentiment score:\(response.queryResult.sentimentAnalysisResult.queryTextSentiment.score)"
           text += "\nSentiment magnitude:\(response.queryResult.sentimentAnalysisResult.queryTextSentiment.magnitude)"
         }
-        tableViewDataSource.append([ApplicationConstants.botKey: text])
-        tableView.insertRows(at: [IndexPath(row: tableViewDataSource.count - 1, section: 0)], with: .automatic)
+        self.tableViewDataSource.append([ApplicationConstants.botKey: text])
+        self.tableView.insertRows(at: [IndexPath(row: self.tableViewDataSource.count - 1, section: 0)], with: .automatic)
       }
       if response.hasOutputAudioConfig, let audioOutput = response.outputAudio {
         audioPlayerFor(audioData: audioOutput)
