@@ -28,8 +28,12 @@ class ApplicationScheme: NSObject {
   override init() {
     self.buttonScheme.colorScheme = self.colorScheme
     self.buttonScheme.typographyScheme = self.typographyScheme
+    self.containerScheme.colorScheme = self.colorScheme as! MDCSemanticColorScheme
+    self.containerScheme.typographyScheme = self.typographyScheme as! MDCTypographyScheme
     super.init()
   }
+  
+  public let containerScheme = MDCContainerScheme()
   
   public let buttonScheme = MDCButtonScheme()
   

@@ -20,7 +20,7 @@ import MaterialComponents
 import MaterialComponents.MaterialTypographyScheme
 
 class SettingsViewController: UIViewController {
-  var colorScheme = ApplicationScheme.shared.colorScheme
+  var containerScheme = ApplicationScheme.shared.containerScheme
   var typographyScheme = MDCTypographyScheme()
   var selectedTransFrom = ""
   var selectedTransTo   = ""
@@ -127,11 +127,7 @@ class SettingsViewController: UIViewController {
   }
 
   func style(textInputController:MDCTextInputControllerFilled) {
-    MDCFilledTextFieldColorThemer.applySemanticColorScheme(colorScheme, to: textInputController)
-    MDCTextFieldTypographyThemer.applyTypographyScheme(typographyScheme, to: textInputController)
-    if let textInput = textInputController.textInput {
-      MDCTextFieldTypographyThemer.applyTypographyScheme(typographyScheme, to: textInput)
-    }
+    textInputController.applyTheme(withScheme: containerScheme)
     MDCContainedButtonThemer.applyScheme(ApplicationScheme.shared.buttonScheme, to: getStartedButton)
   }
 
