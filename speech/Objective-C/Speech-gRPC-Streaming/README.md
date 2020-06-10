@@ -2,6 +2,25 @@
 
 This app demonstrates how to make streaming gRPC connections to the [Cloud Speech API](https://cloud.google.com/speech/) to recognize speech in recorded audio.
 
+## Continuous streaming
+
+This fork demonstrates how to get real-time recognition results over an entire audio session as opposed to a single utterance. 
+
+Streaming recognition fails silently after ~60 seconds of continuous audio, consistent with the [advertised limit](https://cloud.google.com/speech/limits). Once we start streaming, this time limit applies whether we are silent or speaking. To use streaming recognition over a longer audio session, we take advantage of natural pauses in speech to split the recognition task into discrete transactions. The UITextView retains the `isFinal` transcription response for the previous transaction, scroll it to see all of the returned alternatives. 
+
+This demo relies on the Cloud Speech API to detect pauses in speech and automatically restarts the recognition process with each pause. This has a side effect of resetting the 60 second recognition budget. Locally detecting lack of speech would probably be a more effective approach, and could also be used to reduce the likelihood of missing words while in the (narrow) window between transactions. 
+
+Continuous 16k LINEAR16 requires a stable uplink at 256kbps. If network conditions degrade, you may receive the following response with `response.hasError` set: 
+```
+{
+    error {
+      code: 11
+      message: "Audio data is being streamed too slow. Please stream audio data approximately at real time."
+    }
+}
+```
+It appears that recognition does not proceed after this error, so we start a new transaction to recover from this and other error conditions. 
+
 ## Prerequisites
 - An iOS API key for the Cloud Speech API (See
   [the docs][getting-started] to learn more)
