@@ -3,15 +3,6 @@
 echo "Installing Cocoapod dependencies"
 pod install
 
-echo "Clean BoringSSL module.modulemap"
-> Pods/BoringSSL/include/openssl/module.modulemap
-
-echo "Fix the bad imports in the generated files"
-grep -rl "google/api/Annotations.pbobjc.h"  google/** | xargs sed -i '' s@'"google\/api\/Annotations\.pbobjc\.h"'@'\<googleapis\/Annotations\.pbobjc\.h\>'@g
-grep -rl "google/longrunning/Operations.pbobjc.h"  google/** | xargs sed -i '' s@'"google\/longrunning\/Operations\.pbobjc\.h"'@'\<googleapis\/Operations\.pbobjc\.h\>'@g
-grep -rl "google/rpc/Status.pbobjc.h"  google/** | xargs sed -i '' s@'"google\/rpc\/Status\.pbobjc\.h"'@'\<googleapis\/Status\.pbobjc\.h\>'@g
-grep -rl "google/cloud/texttospeech/v1beta1/CloudTts.pbobjc.h" google/** | xargs sed -i '' s@'"google\/cloud\/texttospeech\/v1beta1\/CloudTts\.pbobjc\.h"'@'\"CloudTts\.pbobjc\.h\"'@g
-
 echo "Opening the project workspace in Xcode"
 open TextToSpeech.xcworkspace
 
